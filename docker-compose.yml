@@ -1,0 +1,42 @@
+# OPTIONAL — runs each service as an independent container to mirror a real
+# deployment (the "these are genuinely separate microservices" demonstration).
+# Not required: `npm run start` runs all services in one process, and
+# `npm run demo` runs the full end-to-end walkthrough.
+#
+# Token verification works across containers because each service fetches the
+# auth service's PUBLIC keys from its JWKS endpoint (no shared secret).
+services:
+  auth:
+    build: .
+    command: npm run auth
+    environment: &urls
+      AUTH_URL: http://auth:4001
+      PDP_URL: http://pdp:4002
+      EXPENSE_URL: http://expense:4003
+      REPORTING_URL: http://reporting:4004
+    ports: ["4001:4001"]
+
+  pdp:
+    build: .
+    command: npm run pdp
+    environment: *urls
+    ports: ["4002:4002"]
+
+  expense:
+    build: .
+    command: npm run expense
+    environment: *urls
+    ports: ["4003:4003"]
+
+  reporting:
+    build: .
+    command: npm run reporting
+    environment: *urls
+    ports: ["4004:4004"]
+
+  gateway:
+    build: .
+    command: npm run gateway
+    environment: *urls
+    ports: ["4000:4000"]
+    depends_on: [auth, pdp, expense, reporting]
