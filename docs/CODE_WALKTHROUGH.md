@@ -9,22 +9,22 @@ request flows from login to an audited allow/deny decision. Pair with
 ```mermaid
 flowchart LR
   subgraph shared
-    T[types.ts]
-    K[keys.ts] --> J[jwt.ts]
-    JC[jwks-client.ts] --> J
-    CFG[config.ts]
-    PEP[pep.ts]
+    T["types.ts"]
+    K["keys.ts"] --> J["jwt.ts"]
+    JC["jwks-client.ts"] --> J
+    CFG["config.ts"]
+    PEP["pep.ts"]
   end
   subgraph data
-    R[repositories.ts] --> M[memory-store.ts] --> SD[seed.ts]
+    R["repositories.ts"] --> M["memory-store.ts"] --> SD["seed.ts"]
   end
   subgraph pdp
-    PE[policy-engine.ts] --> PA[pdp/app.ts]
+    PE["policy-engine.ts"] --> PA["pdp/app.ts"]
   end
-  AUTH[auth-service/app.ts] --> J
-  GW[gateway/app.ts] --> PEP
-  EXP[expense/app.ts] --> PEP
-  REP[reporting/app.ts] --> PEP
+  AUTH["auth-service/app.ts"] --> J
+  GW["gateway/app.ts"] --> PEP
+  EXP["expense/app.ts"] --> PEP
+  REP["reporting/app.ts"] --> PEP
   PA --> PE
   J --> PEP
   M --> PA

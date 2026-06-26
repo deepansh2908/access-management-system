@@ -95,33 +95,38 @@ mTLS service mesh. Each is isolated behind a seam so the swap is mechanical (see
 flowchart TB
   client["Client app / machine client"]
   subgraph Edge
-    gw["API Gateway<br/>PEP #1: authn at edge + routing"]
+    gw["API Gateway - PEP 1<br/>authn at edge + routing"]
   end
-  subgraph Identity["Identity & Policy plane"]
-    auth["Auth Service<br/>login, JWT issue, JWKS, service tokens"]
+  subgraph Identity["Identity and Policy plane"]
+    auth["Auth Service<br/>login, JWT, JWKS, service tokens"]
     pdp["Authorization Service / PDP<br/>RBAC+ABAC eval, audit, dynamic roles"]
   end
-  subgraph Domain["Domain services (each with a PEP)"]
+  subgraph Domain["Domain services - each has a PEP"]
     exp["Expense Svc"]
     pay["Payroll Svc"]
     rep["Reporting Svc"]
     other["Workflow / Invoice / Notification"]
   end
   subgraph Data
-    idstore[("Identity & Policy DB<br/>tenants, users, roles, policies")]
+    idstore[("Identity and Policy DB<br/>tenants, users, roles, policies")]
     audit[("Audit log<br/>append-only")]
   end
-
-  client -->|"ALL requests (incl. login) via gateway"| gw
-  gw -->|"/api/auth/* (public, proxied)"| auth
-  gw -->|"authenticated, routed"| exp & pay & rep & other
-  exp & pay & rep & other -->|"POST /authorize"| pdp
-  exp & pay & rep & other -. "verify via JWKS" .-> auth
+  client -->|"all requests via gateway"| gw
+  gw -->|"auth routes - public"| auth
+  gw -->|"authenticated, routed"| exp
+  gw --> pay
+  gw --> rep
+  gw --> other
+  exp -->|"POST /authorize"| pdp
+  pay --> pdp
+  rep --> pdp
+  other --> pdp
+  exp -.->|"verify via JWKS"| auth
   auth --> idstore
   pdp --> idstore
   pdp --> audit
   rep -->|"service token"| auth
-  rep -->|"s2s call (mTLS)"| exp
+  rep -->|"s2s call - mTLS"| exp
 ```
 
 > **The gateway is the single entry point — clients never call any internal service (including
@@ -182,19 +187,19 @@ domain (org hierarchy + per-record/limit rules). See `src/pdp/policy-engine.ts`.
 erDiagram
   TENANT ||--o{ USER : has
   TENANT ||--o{ ROLE : defines
-  USER }o--o{ ROLE : "assigned (roleIds)"
+  USER }o--o{ ROLE : assigned
   ROLE ||--o{ PERMISSION : grants
   TENANT {
     string id PK
     string name
     string status
-    string isolation "pool | silo"
+    string isolation
   }
   USER {
     string id PK
     string tenantId FK
     string email
-    json attributes "department, level, ..."
+    json attributes
     string status
   }
   ROLE {
@@ -203,9 +208,9 @@ erDiagram
     string name
   }
   PERMISSION {
-    string resource "expense | report | *"
-    string action "read | approve | *"
-    json condition "optional ABAC clauses"
+    string resource
+    string action
+    json condition
   }
   AUDIT_ENTRY {
     string id PK
@@ -213,7 +218,7 @@ erDiagram
     string userId
     string resource
     string action
-    string decision "allow | deny"
+    string decision
     string reason
     string requestId
     timestamp ts
@@ -249,9 +254,9 @@ Isolation is the highest-stakes requirement: a single cross-tenant leak is a cri
 
 ```mermaid
 flowchart LR
-  silo["Silo<br/>DB per tenant<br/>strongest isolation · highest cost"]
+  silo["Silo<br/>DB per tenant<br/>strongest isolation, highest cost"]
   bridge["Bridge<br/>schema per tenant<br/>middle ground"]
-  pool["Pool<br/>shared tables + tenantId<br/>cheapest · densest · needs discipline"]
+  pool["Pool<br/>shared tables + tenantId<br/>cheapest, densest, needs discipline"]
   silo --- bridge --- pool
 ```
 
@@ -295,29 +300,27 @@ backup/restore, and data-residency without changing the model.
 ```mermaid
 sequenceDiagram
   participant C as Client
-  participant GW as Gateway (PEP #1)
+  participant GW as Gateway PEP1
   participant A as Auth Service
-  participant S as Expense Service (PEP #2)
+  participant S as Expense Service PEP2
   participant P as PDP
-  participant DB as Identity/Policy DB
-
+  participant DB as Identity Policy DB
   C->>GW: POST /api/auth/login (email, password)
-  GW->>A: proxy (public route, no token required)
+  GW->>A: proxy public route, no token
   A->>DB: lookup user, verify credential
-  A-->>GW: access JWT {sub, tenantId, roles} (15 min)
+  A-->>GW: access JWT with sub, tenantId, roles (15 min)
   GW-->>C: access JWT
-
-  C->>GW: GET /api/expense/expenses/exp-1 (Bearer JWT)
-  GW->>GW: verify JWT (JWKS), attach principal + requestId
-  GW->>S: forward (+ Bearer, x-request-id)
+  C->>GW: GET /api/expense/expenses/exp-1 with Bearer JWT
+  GW->>GW: verify JWT via JWKS, attach principal + requestId
+  GW->>S: forward with Bearer + x-request-id
   S->>S: verify JWT again (defense in depth)
-  S->>S: load resource (tenant-scoped) -> attributes
-  S->>P: POST /authorize {tenant,user,resource,action,resourceAttrs}
+  S->>S: load resource tenant-scoped for attributes
+  S->>P: POST /authorize tenant, user, resource, action, attrs
   P->>DB: load user roles + permissions
   P->>P: evaluate RBAC + ABAC (deny by default)
   P->>P: append audit entry
-  P-->>S: {decision: allow, reason}
-  S-->>C: 200 resource  (or 403 if denied)
+  P-->>S: decision allow + reason
+  S-->>C: 200 resource (or 403 if denied)
 ```
 
 ### 7.2 Token strategy & revocation
@@ -344,16 +347,15 @@ sequenceDiagram
 sequenceDiagram
   participant R as Reporting Service
   participant A as Auth Service
-  participant E as Expense Service (PEP)
+  participant E as Expense Service PEP
   participant P as PDP
-
   R->>A: POST /token (client-credentials, tenantId)
-  A-->>R: service JWT {sub: reporting-service@tenant, roles:[svc-reporting]}
-  R->>E: GET /internal/expenses (Bearer service JWT, x-request-id)
-  E->>P: authorize(service principal, expense, read)
-  P-->>E: allow (scoped service role grants expense:read only)
+  A-->>R: service JWT, sub reporting-service, role svc-reporting
+  R->>E: GET /internal/expenses with Bearer service JWT
+  E->>P: authorize service principal, expense, read
+  P-->>E: allow - svc role grants expense read only
   E-->>R: tenant-scoped expenses
-  R->>R: aggregate -> report
+  R->>R: aggregate into report
 ```
 
 - **Identity:** each service has a **per-tenant service identity** with a scoped role, obtained
@@ -485,12 +487,12 @@ Token claims: `{ sub, tenantId, roles[], email, type: "user"|"service", iat, exp
 
 ```mermaid
 flowchart LR
-  req["request"] --> cache{"PEP decision cache<br/>(TTL + policy version)"}
+  req["request"] --> cache{"PEP decision cache<br/>TTL + policy version"}
   cache -->|hit| enforce["enforce"]
   cache -->|miss| pdp["PDP"]
   pdp --> cache
   pdp --> audit[("audit")]
-  change["policy change"] -->|"bump version / invalidate"| cache
+  change["policy change"] -->|"bump version or invalidate"| cache
 ```
 
 ---
@@ -576,30 +578,30 @@ implementation behind the seams that already exist; it does not redesign.
 
 ```mermaid
 flowchart LR
-  subgraph NOW["✅ BUILT NOW (reference slice)"]
+  subgraph NOW["BUILT NOW - reference slice"]
     n1["PDP: RBAC+ABAC engine, deny-by-default"]
     n2["PEP: authn + enforce, fail-closed"]
     n3["JWT issue/verify + JWKS"]
-    n4["Pooled tenant isolation (app-level)"]
-    n5["Zero-trust S2S (scoped service token)"]
+    n4["Pooled tenant isolation, app-level"]
+    n5["Zero-trust S2S, scoped service token"]
     n6["Dynamic roles + append-only audit"]
     n7["Zod validation at every boundary"]
     n8["In-memory store behind repo interfaces"]
   end
-  subgraph LATER["🔜 PRODUCTION BUILD (deferred)"]
+  subgraph LATER["PRODUCTION BUILD - deferred"]
     l1["Postgres + Row-Level Security"]
     l2["PEP decision cache + OPA policy bundles"]
-    l3["Refresh-token rotation + revocation (version/jti)"]
+    l3["Refresh-token rotation + revocation"]
     l4["mTLS via service mesh"]
-    l5["Rate limiting + quotas (per-tenant)"]
+    l5["Rate limiting + quotas, per-tenant"]
     l6["Secrets in KMS/HSM + key rotation"]
-    l7["Audit -> Kafka -> columnar store (WORM)"]
+    l7["Audit to Kafka to columnar store, WORM"]
     l8["Observability: metrics, tracing, alerting"]
   end
-  n8 -. "swap impl, no API change" .-> l1
-  n2 -. "add cache layer" .-> l2
-  n3 -. "add rotation/revoke" .-> l3
-  n5 -. "add transport identity" .-> l4
+  n8 -.->|"swap impl, no API change"| l1
+  n2 -.->|"add cache layer"| l2
+  n3 -.->|"add rotation or revoke"| l3
+  n5 -.->|"add transport identity"| l4
 ```
 
 ### 16.2 HLD status — component by component
